@@ -1,0 +1,26 @@
+name: vpn_app
+description: Company VPN Flutter App
+
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  openvpn_flutter: ^1.3.3
+  dio: ^5.4.0
+  google_fonts: ^8.1.0
+  permission_handler: ^12.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/mobile_client.ovpn
