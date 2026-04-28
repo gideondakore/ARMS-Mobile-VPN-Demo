@@ -1,119 +1,72 @@
-# Company VPN Flutter App
+Trying Flutter VPN Demo
+=======================
 
-AWS Client VPN · Certificate Auth · Split Tunnel · Android
+Overview
+--------
+This project is a Flutter demo app that shows a basic VPN client flow. It includes
+an example OpenVPN profile, a minimal API client, and a service layer for VPN
+operations. The app targets Android, iOS, desktop, and web, but VPN functionality
+is typically limited to mobile platforms.
 
----
+Features
+--------
+- Basic Flutter app shell with a home screen.
+- VPN service abstraction in the app layer.
+- Example OpenVPN configuration asset.
+- Android/iOS build scaffolding and platform plugins.
 
-## Project Structure
+Project Structure
+-----------------
+- lib/main.dart: App entry point.
+- lib/screens/home_screen.dart: Main UI screen.
+- lib/services/vpn_service.dart: VPN interaction layer.
+- lib/network/api_client.dart: API helper for network calls.
+- assets/mobile_client.ovpn: Example OpenVPN profile asset.
 
-```
-lib/
-  main.dart                  ← App entry, auto-connect on launch
-  services/
-    vpn_service.dart         ← openvpn_flutter wrapper (real VPN logic)
-  network/
-    api_client.dart          ← Dio + VpnInterceptor
-  screens/
-    home_screen.dart         ← UI
-assets/
-  mobile_client.ovpn         ← Your inline .ovpn config (YOU MUST ADD THIS)
-android/
-  app/src/main/
-    AndroidManifest.xml      ← VPN service declaration
-```
+Requirements
+------------
+- Flutter SDK (stable channel).
+- Dart SDK (bundled with Flutter).
+- Android Studio or Xcode (for mobile builds).
+- A real VPN profile if you want to connect (do not use the example in production).
 
----
+Setup
+-----
+1) Install Flutter and confirm the environment:
+	flutter doctor
 
-## Step 1 — Generate your inline .ovpn (run on your laptop)
+2) Fetch dependencies:
+	flutter pub get
 
-Your current clientconfig.ovpn uses external cert paths that don't work on mobile.
-Convert to inline format:
+3) Run the app:
+	flutter run
 
-```bash
-# Strip the --cert and --key lines
-cat clientconfig.ovpn | grep -v "^\-\-cert\|^\-\-key" > mobile_client.ovpn
+Platform Notes
+--------------
+- Android: Ensure you have a device or emulator with VPN support.
+- iOS: VPN entitlements and provisioning are required to test on device.
+- Desktop/Web: VPN functionality is typically not supported.
 
-# Embed the cert inline
-echo "<cert>" >> mobile_client.ovpn
-cat /home/gideon-dakore/easy-rsa/pki/issued/gideon.dakore.domain.tld.crt >> mobile_client.ovpn
-echo "</cert>" >> mobile_client.ovpn
+Configuration
+-------------
+- The OpenVPN profile is stored at assets/mobile_client.ovpn.
+- Replace the example profile with a valid one before testing real connections.
 
-# Embed the key inline
-echo "<key>" >> mobile_client.ovpn
-cat /home/gideon-dakore/easy-rsa/pki/private/gideon.dakore.domain.tld.key >> mobile_client.ovpn
-echo "</key>" >> mobile_client.ovpn
-```
+Security Notes
+--------------
+- Do not commit real VPN credentials or secrets.
+- Treat the sample profile as a placeholder only.
 
-Verify the output:
-```bash
-cat mobile_client.ovpn
-# Must contain: <ca>...</ca>  <cert>...</cert>  <key>...</key>
-```
+Development Tips
+----------------
+- Keep network and VPN operations in lib/services for clean separation.
+- Use environment-specific config for API endpoints if needed.
 
-Then copy mobile_client.ovpn into the assets/ folder of this project.
+Troubleshooting
+---------------
+- If the app fails to connect, verify the VPN profile and platform permissions.
+- Run flutter doctor to ensure the toolchain is configured correctly.
 
----
-
-## Step 2 — Update your App ID
-
-Replace `com.yourcompany.vpnapp` in:
-- android/app/build.gradle  → applicationId
-- android/app/src/main/AndroidManifest.xml
-- lib/services/vpn_service.dart (groupIdentifier — iOS only, can ignore for now)
-
----
-
-## Step 3 — Update your API base URL
-
-In lib/main.dart:
-```dart
-ApiClient.init(vpnService, baseUrl: 'http://10.5.1.YOUR_ACTUAL_IP/api');
-```
-
----
-
-## Step 4 — Install dependencies
-
-```bash
-flutter pub get
-```
-
----
-
-## Step 5 — Run on Android
-
-```bash
-# Connect Android device with USB debugging ON
-# OR start an Android emulator
-
-flutter run
-```
-
-On first launch, Android will show a system dialog:
-  "Company VPN wants to set up a VPN connection"
-  → Tap OK
-
-This is a mandatory one-time OS prompt that cannot be bypassed.
-
----
-
-## How it works
-
-1. App launches → VpnService.initialize() + connect() fires automatically
-2. OpenVPN reads mobile_client.ovpn from assets
-3. OS creates a tun0 network interface and routes 10.5.1.x traffic through it
-4. All other traffic (YouTube, social, etc.) goes through normal ISP — split tunnel
-5. Dio interceptor blocks any API call until VPN is confirmed connected
-6. Your private APIs at 10.5.1.x are now reachable from the mobile device
-
----
-
-## Troubleshooting
-
-| Issue | Fix |
-|---|---|
-| "TLS handshake failed" | Your .ovpn cert/key may be wrong or expired |
-| "AUTH_FAILED" | Check that certIsRequired: true matches server config |
-| App crashes on connect | Check AndroidManifest.xml has the OpenVPNService declaration |
-| API timeout even when connected | Verify your base URL matches the VPN subnet IP |
-| "VPN permission denied" | User must tap OK on the Android VPN dialog |
+License
+-------
+Add your license details here.
