@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter pub *)",
+      "Bash(flutter analyze *)"
+    ],
+    "additionalDirectories": [
+      "/home/gideon-dakore/Desktop/vpn_demo/app"
+    ]
+  }
+}
