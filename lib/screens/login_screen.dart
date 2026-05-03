@@ -38,7 +38,8 @@ class _LoginScreenState extends State<LoginScreen> {
           builder: (context, _) {
             final isLoading =
                 appController.state == AppState.authenticating ||
-                appController.state == AppState.fetchingConfig;
+                appController.state == AppState.fetchingConfig ||
+                appController.state == AppState.reconnecting;
 
             return SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
@@ -129,38 +130,48 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildVpnBadge() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF22C55E).withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: const Color(0xFF22C55E).withValues(alpha: 0.2),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0xFF22C55E),
-            ),
+    return ListenableBuilder(
+      listenable: vpnService,
+      builder: (context, _) {
+        final connected = vpnService.isConnected;
+        final color = connected
+            ? const Color(0xFF22C55E)
+            : const Color(0xFFFBBF24);
+        final label = connected
+            ? 'Secure tunnel active'
+            : 'Establishing tunnel · ${vpnService.message}';
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withValues(alpha: 0.2)),
           ),
-          const SizedBox(width: 8),
-          Text(
-            'Secure tunnel active',
-            style: GoogleFonts.jetBrainsMono(
-              color: const Color(0xFF22C55E),
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.jetBrainsMono(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 

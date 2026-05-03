@@ -12,30 +12,44 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  bool _apiLoading = false;
-  String _apiResult = '';
+  bool _loading = true;
+  String? _error;
 
-  Future<void> _fetchEmployeeData() async {
+  Map<String, dynamic>? _profile;
+  Map<String, dynamic>? _clocking;
+  Map<String, dynamic>? _leaveBalance;
+  List<dynamic>? _recentLeaves;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
     setState(() {
-      _apiLoading = true;
-      _apiResult = '';
+      _loading = true;
+      _error = null;
     });
     try {
-      // Example query — swap in real GraphQL fields from your gateway.
-      final data = await ApiClient.graphQL('''
-        query GetEmployee {
-          employee {
-            name
-            department
-            position
-          }
-        }
-      ''');
-      setState(() => _apiResult = '✓  ${data.toString()}');
+      final results = await Future.wait([
+        ApiClient.instance.get('/employee/profile'),
+        ApiClient.instance.get('/clocking/today'),
+        ApiClient.instance.get('/leaves/balance'),
+        ApiClient.instance.get('/leaves/recent'),
+      ]);
+      setState(() {
+        _profile = results[0].data as Map<String, dynamic>;
+        _clocking = results[1].data as Map<String, dynamic>;
+        _leaveBalance = results[2].data as Map<String, dynamic>;
+        _recentLeaves = results[3].data as List<dynamic>;
+        _loading = false;
+      });
     } catch (e) {
-      setState(() => _apiResult = '✗  $e');
-    } finally {
-      setState(() => _apiLoading = false);
+      setState(() {
+        _error = 'Failed to load dashboard data.\n${e.toString()}';
+        _loading = false;
+      });
     }
   }
 
@@ -43,28 +57,91 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: ListenableBuilder(
-          listenable: vpnService,
-          builder: (context, _) {
-            return SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildTopBar(context),
-                  const SizedBox(height: 28),
-                  _buildWelcomeCard(),
-                  const SizedBox(height: 16),
-                  _buildVpnStatusCard(),
-                  const SizedBox(height: 16),
-                  _buildStatsRow(),
-                  const SizedBox(height: 16),
-                  _buildApiCard(),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            );
-          },
+        child: _loading
+            ? _buildLoader()
+            : _error != null
+            ? _buildErrorView()
+            : _buildDashboard(context),
+      ),
+    );
+  }
+
+  // ── States ────────────────────────────────────────────────────
+
+  Widget _buildLoader() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(color: Color(0xFF00D4FF)),
+          const SizedBox(height: 16),
+          Text(
+            'Loading dashboard…',
+            style: GoogleFonts.inter(color: Colors.white38, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.cloud_off_rounded,
+              color: Color(0xFFEF4444),
+              size: 48,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(color: Colors.white54, fontSize: 13),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: _loadDashboard,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDashboard(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: _loadDashboard,
+      color: const Color(0xFF00D4FF),
+      backgroundColor: const Color(0xFF111827),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildTopBar(context),
+            const SizedBox(height: 24),
+            _buildProfileCard(),
+            const SizedBox(height: 14),
+            _buildVpnBadge(),
+            const SizedBox(height: 20),
+            _buildAttendanceCard(),
+            const SizedBox(height: 14),
+            _buildSectionLabel('LEAVE BALANCE'),
+            const SizedBox(height: 10),
+            _buildLeaveBalanceRow(),
+            const SizedBox(height: 20),
+            _buildSectionLabel('RECENT LEAVE REQUESTS'),
+            const SizedBox(height: 10),
+            _buildRecentLeaves(),
+            const SizedBox(height: 24),
+          ],
         ),
       ),
     );
@@ -75,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildTopBar(BuildContext context) {
     return Row(
       children: [
-        _badge('ARMS MOBILE', const Color(0xFF00D4FF)),
+        _chip('ARMS MOBILE', const Color(0xFF00D4FF)),
         const Spacer(),
         IconButton(
           onPressed: () => _confirmLogout(context),
@@ -90,12 +167,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ── Welcome ───────────────────────────────────────────────────
+  // ── Profile card ──────────────────────────────────────────────
 
-  Widget _buildWelcomeCard() {
-    final username = appController.username ?? 'employee';
-    final displayName = username.replaceAll('.', ' ');
-    final initials = displayName
+  Widget _buildProfileCard() {
+    final name = _profile?['name'] as String? ?? appController.username ?? '';
+    final position = _profile?['position'] as String? ?? '';
+    final dept = _profile?['department'] as String? ?? '';
+    final empId = _profile?['employeeId'] as String? ?? '';
+    final initials = name
         .split(' ')
         .take(2)
         .map((w) => w.isNotEmpty ? w[0].toUpperCase() : '')
@@ -107,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
         gradient: LinearGradient(
           colors: [
             const Color(0xFF00D4FF).withValues(alpha: 0.12),
-            const Color(0xFF818CF8).withValues(alpha: 0.08),
+            const Color(0xFF818CF8).withValues(alpha: 0.07),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -120,197 +199,172 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         children: [
           CircleAvatar(
-            radius: 28,
+            radius: 30,
             backgroundColor: const Color(0xFF00D4FF).withValues(alpha: 0.15),
             child: Text(
               initials,
               style: GoogleFonts.spaceGrotesk(
                 color: const Color(0xFF00D4FF),
-                fontSize: 18,
+                fontSize: 20,
                 fontWeight: FontWeight.w700,
               ),
             ),
           ),
           const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Welcome back,',
-                style: GoogleFonts.inter(color: Colors.white38, fontSize: 12),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _titleCase(displayName),
-                style: GoogleFonts.spaceGrotesk(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '$username@amalitech.com',
-                style: GoogleFonts.jetBrainsMono(
-                  color: Colors.white38,
-                  fontSize: 11,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── VPN status ────────────────────────────────────────────────
-
-  Widget _buildVpnStatusCard() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF111827),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: const Color(0xFF22C55E).withValues(alpha: 0.1),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.shield_rounded,
-              color: Color(0xFF22C55E),
-              size: 18,
-            ),
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  vpnService.message,
-                  style: GoogleFonts.inter(
+                  name,
+                  style: GoogleFonts.spaceGrotesk(
                     color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
+                const SizedBox(height: 2),
                 Text(
-                  'Personalized tunnel · split-tunnel routing',
+                  position,
+                  style: GoogleFonts.inter(color: Colors.white60, fontSize: 13),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  dept,
+                  style: GoogleFonts.inter(color: Colors.white38, fontSize: 12),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  empId,
                   style: GoogleFonts.jetBrainsMono(
-                    color: Colors.white38,
+                    color: const Color(0xFF00D4FF).withValues(alpha: 0.6),
                     fontSize: 10,
                   ),
                 ),
               ],
             ),
           ),
-          _dot(const Color(0xFF22C55E)),
         ],
       ),
     );
   }
 
-  // ── Stats row ─────────────────────────────────────────────────
+  // ── VPN status badge ──────────────────────────────────────────
 
-  Widget _buildStatsRow() {
-    return Row(
-      children: [
-        Expanded(
-          child: _StatTile(
-            label: 'DATA IN',
-            value: vpnService.bytesIn,
-            color: const Color(0xFF00D4FF),
-            icon: Icons.arrow_downward_rounded,
+  Widget _buildVpnBadge() {
+    return ListenableBuilder(
+      listenable: vpnService,
+      builder: (context, _) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF22C55E).withValues(alpha: 0.07),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: const Color(0xFF22C55E).withValues(alpha: 0.2),
+            ),
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _StatTile(
-            label: 'DATA OUT',
-            value: vpnService.bytesOut,
-            color: const Color(0xFF818CF8),
-            icon: Icons.arrow_upward_rounded,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xFF22C55E),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Personalized VPN active · split-tunnel routing',
+                style: GoogleFonts.jetBrainsMono(
+                  color: const Color(0xFF22C55E),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _StatTile(
-            label: 'MODE',
-            value: 'Split',
-            color: const Color(0xFF22C55E),
-            icon: Icons.call_split_rounded,
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
-  // ── API test card ─────────────────────────────────────────────
+  // ── Attendance card ───────────────────────────────────────────
 
-  Widget _buildApiCard() {
+  Widget _buildAttendanceCard() {
+    final status = _clocking?['status'] as String? ?? 'not_clocked_in';
+    final clockIn = _clocking?['clockIn'] as String?;
+    final hours = _clocking?['hoursWorked'] as String?;
+    final location = _clocking?['location'] as String?;
+    final date = _clocking?['date'] as String? ?? '';
+
+    final isClockedIn = status == 'clocked_in';
+    final color = isClockedIn
+        ? const Color(0xFF22C55E)
+        : const Color(0xFF6B7280);
+    final label = isClockedIn ? 'CLOCKED IN' : 'NOT CLOCKED IN';
+
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: const Color(0xFF111827),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'GRAPHQL GATEWAY',
-            style: GoogleFonts.jetBrainsMono(
-              color: Colors.white38,
-              fontSize: 10,
-              letterSpacing: 1.5,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Query employee data via the internal API',
-            style: GoogleFonts.inter(color: Colors.white54, fontSize: 12),
+          Row(
+            children: [
+              Icon(Icons.access_time_rounded, color: color, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                "TODAY'S ATTENDANCE",
+                style: GoogleFonts.jetBrainsMono(
+                  color: Colors.white38,
+                  fontSize: 10,
+                  letterSpacing: 1.4,
+                ),
+              ),
+              const Spacer(),
+              _chip(label, color),
+            ],
           ),
           const SizedBox(height: 14),
-          _ActionButton(
-            label: 'Fetch My Data',
-            color: const Color(0xFF818CF8),
-            loading: _apiLoading,
-            icon: Icons.bolt_rounded,
-            onTap: _apiLoading ? null : _fetchEmployeeData,
+          Row(
+            children: [
+              _attendanceStat('DATE', date, const Color(0xFF00D4FF)),
+              const SizedBox(width: 12),
+              _attendanceStat(
+                'CLOCK IN',
+                clockIn ?? '--',
+                const Color(0xFF22C55E),
+              ),
+              const SizedBox(width: 12),
+              _attendanceStat(
+                'HOURS',
+                hours != null ? '${hours}h' : '--',
+                const Color(0xFF818CF8),
+              ),
+            ],
           ),
-          if (_apiResult.isNotEmpty) ...[
+          if (location != null) ...[
             const SizedBox(height: 12),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: _apiResult.startsWith('✓')
-                    ? const Color(0xFF22C55E).withValues(alpha: 0.07)
-                    : const Color(0xFFEF4444).withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _apiResult.startsWith('✓')
-                      ? const Color(0xFF22C55E).withValues(alpha: 0.25)
-                      : const Color(0xFFEF4444).withValues(alpha: 0.25),
+            Row(
+              children: [
+                const Icon(
+                  Icons.location_on_outlined,
+                  color: Colors.white24,
+                  size: 14,
                 ),
-              ),
-              child: Text(
-                _apiResult,
-                style: GoogleFonts.jetBrainsMono(
-                  color: _apiResult.startsWith('✓')
-                      ? const Color(0xFF22C55E)
-                      : const Color(0xFFEF4444),
-                  fontSize: 11,
+                const SizedBox(width: 6),
+                Text(
+                  location,
+                  style: GoogleFonts.inter(color: Colors.white38, fontSize: 12),
                 ),
-              ),
+              ],
             ),
           ],
         ],
@@ -318,7 +372,141 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _attendanceStat(String label, String value, Color color) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withValues(alpha: 0.15)),
+        ),
+        child: Column(
+          children: [
+            Text(
+              value,
+              style: GoogleFonts.jetBrainsMono(
+                color: color,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: GoogleFonts.jetBrainsMono(
+                color: color.withValues(alpha: 0.55),
+                fontSize: 9,
+                letterSpacing: 1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Leave balance ─────────────────────────────────────────────
+
+  Widget _buildLeaveBalanceRow() {
+    if (_leaveBalance == null) return const SizedBox.shrink();
+
+    final items = [
+      ('annual', 'Annual', const Color(0xFF00D4FF)),
+      ('sick', 'Sick', const Color(0xFFEF4444)),
+      ('emergency', 'Emergency', const Color(0xFF818CF8)),
+    ];
+
+    return Row(
+      children: items.expand((item) {
+        final (key, label, color) = item;
+        final data = _leaveBalance![key] as Map<String, dynamic>?;
+        return [
+          Expanded(
+            child: _LeaveCard(
+              label: label,
+              remaining: data?['remaining'] as int? ?? 0,
+              total: data?['total'] as int? ?? 0,
+              color: color,
+            ),
+          ),
+          if (key != 'emergency') const SizedBox(width: 10),
+        ];
+      }).toList(),
+    );
+  }
+
+  // ── Recent leaves ─────────────────────────────────────────────
+
+  Widget _buildRecentLeaves() {
+    if (_recentLeaves == null || _recentLeaves!.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF111827),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+        ),
+        child: Center(
+          child: Text(
+            'No recent leave requests',
+            style: GoogleFonts.inter(color: Colors.white38, fontSize: 13),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF111827),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.07)),
+      ),
+      child: Column(
+        children: _recentLeaves!.asMap().entries.map((entry) {
+          final i = entry.key;
+          final item = entry.value as Map<String, dynamic>;
+          return _LeaveRequestRow(
+            item: item,
+            showDivider: i < _recentLeaves!.length - 1,
+          );
+        }).toList(),
+      ),
+    );
+  }
+
   // ── Helpers ───────────────────────────────────────────────────
+
+  Widget _buildSectionLabel(String label) {
+    return Text(
+      label,
+      style: GoogleFonts.jetBrainsMono(
+        color: Colors.white38,
+        fontSize: 10,
+        letterSpacing: 1.5,
+      ),
+    );
+  }
+
+  Widget _chip(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.jetBrainsMono(
+          color: color,
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 1.2,
+        ),
+      ),
+    );
+  }
 
   void _confirmLogout(BuildContext context) {
     showDialog<void>(
@@ -331,7 +519,7 @@ class _HomeScreenState extends State<HomeScreen> {
           style: GoogleFonts.spaceGrotesk(color: Colors.white),
         ),
         content: Text(
-          'You\'ll be disconnected from the personalized VPN and returned to the login screen.',
+          'You\'ll be disconnected from your personalized VPN and returned to the login screen.',
           style: GoogleFonts.inter(color: Colors.white54, fontSize: 13),
         ),
         actions: [
@@ -356,87 +544,53 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-
-  Widget _badge(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
-      ),
-      child: Text(
-        label,
-        style: GoogleFonts.jetBrainsMono(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1.2,
-        ),
-      ),
-    );
-  }
-
-  Widget _dot(Color color) {
-    return Container(
-      width: 8,
-      height: 8,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: color,
-        boxShadow: [
-          BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 6),
-        ],
-      ),
-    );
-  }
-
-  String _titleCase(String s) => s
-      .split(' ')
-      .map((w) => w.isEmpty ? '' : '${w[0].toUpperCase()}${w.substring(1)}')
-      .join(' ');
 }
 
-// ─── Shared sub-widgets ────────────────────────────────────────
+// ── Leave balance card ─────────────────────────────────────────
 
-class _StatTile extends StatelessWidget {
-  const _StatTile({
+class _LeaveCard extends StatelessWidget {
+  const _LeaveCard({
     required this.label,
-    required this.value,
+    required this.remaining,
+    required this.total,
     required this.color,
-    required this.icon,
   });
 
-  final String label, value;
+  final String label;
+  final int remaining, total;
   final Color color;
-  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.07),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.15)),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
       ),
       child: Column(
         children: [
-          Icon(icon, color: color, size: 15),
-          const SizedBox(height: 4),
           Text(
-            value,
-            style: GoogleFonts.jetBrainsMono(
+            '$remaining',
+            style: GoogleFonts.spaceGrotesk(
               color: color,
-              fontSize: 11,
+              fontSize: 28,
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 2),
+          Text(
+            '/ $total days',
+            style: GoogleFonts.jetBrainsMono(
+              color: color.withValues(alpha: 0.55),
+              fontSize: 10,
+            ),
+          ),
+          const SizedBox(height: 4),
           Text(
             label,
             style: GoogleFonts.jetBrainsMono(
-              color: color.withValues(alpha: 0.55),
+              color: Colors.white38,
               fontSize: 9,
               letterSpacing: 1,
             ),
@@ -447,62 +601,75 @@ class _StatTile extends StatelessWidget {
   }
 }
 
-class _ActionButton extends StatelessWidget {
-  const _ActionButton({
-    required this.label,
-    required this.color,
-    required this.loading,
-    required this.onTap,
-    this.icon,
-  });
+// ── Leave request row ─────────────────────────────────────────
 
-  final String label;
-  final Color color;
-  final bool loading;
-  final VoidCallback? onTap;
-  final IconData? icon;
+class _LeaveRequestRow extends StatelessWidget {
+  const _LeaveRequestRow({required this.item, required this.showDivider});
+
+  final Map<String, dynamic> item;
+  final bool showDivider;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 20),
-        decoration: BoxDecoration(
-          color: onTap == null
-              ? color.withValues(alpha: 0.05)
-              : color.withValues(alpha: 0.11),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: onTap == null
-                ? color.withValues(alpha: 0.12)
-                : color.withValues(alpha: 0.38),
+    final status = item['status'] as String? ?? '';
+    final (statusColor, statusLabel) = switch (status) {
+      'approved' => (const Color(0xFF22C55E), 'Approved'),
+      'pending' => (const Color(0xFFFBBF24), 'Pending'),
+      'rejected' => (const Color(0xFFEF4444), 'Rejected'),
+      _ => (const Color(0xFF6B7280), status),
+    };
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item['type'] as String? ?? '',
+                      style: GoogleFonts.inter(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${item['from']}  →  ${item['to']}  ·  ${item['days']} day${(item['days'] as int) > 1 ? 's' : ''}',
+                      style: GoogleFonts.jetBrainsMono(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+                ),
+                child: Text(
+                  statusLabel,
+                  style: GoogleFonts.jetBrainsMono(
+                    color: statusColor,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (loading)
-              SizedBox(
-                width: 15,
-                height: 15,
-                child: CircularProgressIndicator(strokeWidth: 2, color: color),
-              )
-            else if (icon != null)
-              Icon(icon, color: color, size: 17),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: GoogleFonts.spaceGrotesk(
-                color: color,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
+        if (showDivider)
+          Divider(height: 1, color: Colors.white.withValues(alpha: 0.06)),
+      ],
     );
   }
 }

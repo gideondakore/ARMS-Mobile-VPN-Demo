@@ -99,10 +99,6 @@ class SplashScreen extends StatelessWidget {
 
   (String, String) _labels(AppState state) => switch (state) {
     AppState.initializing => ('Starting up', 'Preparing secure environment…'),
-    AppState.connectingDefault => (
-      'Establishing tunnel',
-      'Connecting to ARMS VPN…',
-    ),
     AppState.reconnecting => (
       'Activating access',
       'Connecting with your personalized config…',

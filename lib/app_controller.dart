@@ -12,7 +12,6 @@ import 'services/vpn_service.dart';
 
 enum AppState {
   initializing,
-  connectingDefault,
   login,
   authenticating,
   fetchingConfig,
@@ -43,6 +42,19 @@ class AppController extends ChangeNotifier {
   String? get username => _username;
 
   // ── Boot sequence ─────────────────────────────────────────────
+  //
+  // Mirrors the trying_flutter pattern that's known to work on real
+  // Android devices: initialize the OpenVPN library, kick off the
+  // connection without awaiting it, and let the UI be reactive.
+  //
+  // Why not await the connection here? The native callbacks fire on
+  // the platform thread and any async work between initialize() and
+  // connect() can leave the library reporting a stale "unknown" stage,
+  // which silently blocks subsequent connect() calls.
+  //
+  // The VpnInterceptor in api_client.dart blocks every API request
+  // until the tunnel is up, so the rest of the app behaves as if VPN
+  // connection were synchronous.
 
   Future<void> initialize() async {
     _set(AppState.initializing);
@@ -55,20 +67,16 @@ class AppController extends ChangeNotifier {
       final ovpn = await storage.getOvpnConfig();
       final savedUsername = await storage.getUsername();
 
-      if (token != null && ovpn != null && savedUsername != null) {
-        // Returning user — reconnect with their personalized config.
+      final hasSession = token != null && ovpn != null && savedUsername != null;
+
+      if (hasSession) {
         _username = savedUsername;
         ApiClient.setAuthToken(token);
-        _set(AppState.reconnecting);
-        await vpnService.connect(configOverride: ovpn);
-        await _awaitConnected();
+        // Fire and forget — VpnInterceptor will gate API requests.
+        unawaited(vpnService.connect(configOverride: ovpn));
         _set(AppState.authenticated);
       } else {
-        // First launch — connect with the bundled default config.
-        // The default config only grants access to the auth endpoint.
-        _set(AppState.connectingDefault);
-        await vpnService.connect();
-        await _awaitConnected();
+        unawaited(vpnService.connect());
         _set(AppState.login);
       }
     } catch (e) {
@@ -84,22 +92,25 @@ class AppController extends ChangeNotifier {
     _set(AppState.authenticating);
 
     try {
-      // 1. Authenticate → JWT
+      // 1. Authenticate. The VpnInterceptor blocks this request
+      //    until the default VPN tunnel is up.
       final result = await auth.login(email, password);
       _username = result.username;
 
-      // 2. Fetch the personalized .ovpn with the fresh JWT
+      // 2. Fetch the personalized .ovpn (still on the default tunnel).
       _set(AppState.fetchingConfig);
       final ovpn = await auth.fetchPersonalizedConfig();
 
-      // 3. Persist session
+      // 3. Persist session.
       await Future.wait([
         storage.saveToken(result.token),
         storage.saveUsername(result.username),
         storage.saveOvpnConfig(ovpn),
       ]);
 
-      // 4. Swap VPN config — disconnect default, connect personalized
+      // 4. Swap to the personalized config and wait for it to come up
+      //    before showing the home screen, so the dashboard's API calls
+      //    fire over the right tunnel.
       _set(AppState.reconnecting);
       await vpnService.reconnectWith(ovpn);
       await _awaitConnected();
@@ -121,9 +132,8 @@ class AppController extends ChangeNotifier {
     final defaultConfig = await rootBundle.loadString(
       'assets/mobile_client.ovpn',
     );
-    _set(AppState.connectingDefault);
+    _set(AppState.reconnecting);
     await vpnService.reconnectWith(defaultConfig);
-    await _awaitConnected();
     _set(AppState.login);
   }
 
@@ -131,43 +141,49 @@ class AppController extends ChangeNotifier {
 
   // ── Helpers ───────────────────────────────────────────────────
 
+  /// Waits up to [timeout] for the VPN to reach the connected state.
+  /// Used after reconnectWith() so home-screen API calls don't fire
+  /// before the personalized tunnel is fully established.
   Future<void> _awaitConnected({
     Duration timeout = const Duration(seconds: 45),
   }) async {
-    // Emulators cannot create TUN/TAP interfaces, so VPN never connects.
-    // BYPASS_VPN=true skips the wait so the UI flow can be tested without
-    // a real device. Never set this in production.
     if (kBypassVpn) return;
+    if (vpnService.isConnected) return;
 
-    final deadline = DateTime.now().add(timeout);
+    final completer = Completer<void>();
 
-    // Brief pause so the library has time to kick off the connection.
-    await Future.delayed(const Duration(milliseconds: 600));
-
-    while (true) {
-      if (vpnService.isConnected) return;
-
-      if (vpnService.stage == VPNStage.error || vpnService.error != null) {
-        throw Exception(vpnService.error ?? 'VPN connection failed');
-      }
-
-      if (DateTime.now().isAfter(deadline)) {
-        throw TimeoutException(
-          'VPN did not connect within ${timeout.inSeconds} seconds.',
+    void listener() {
+      if (completer.isCompleted) return;
+      if (vpnService.isConnected) {
+        completer.complete();
+      } else if (vpnService.stage == VPNStage.error ||
+          vpnService.error != null) {
+        completer.completeError(
+          Exception(vpnService.error ?? 'VPN connection failed'),
         );
       }
+    }
 
-      await Future.delayed(const Duration(milliseconds: 300));
+    vpnService.addListener(listener);
+    try {
+      await completer.future.timeout(
+        timeout,
+        onTimeout: () => throw TimeoutException(
+          'VPN did not connect within ${timeout.inSeconds}s.',
+        ),
+      );
+    } finally {
+      vpnService.removeListener(listener);
     }
   }
 
   String _friendlyError(Object e) {
+    if (e is TimeoutException) {
+      return 'Connection timed out. Check your network and try again.';
+    }
     final msg = e.toString();
     if (msg.contains('401') || msg.contains('Unauthorized')) {
       return 'Invalid email or password.';
-    }
-    if (msg.contains('timed out') || msg is TimeoutException) {
-      return 'Connection timed out. Check your network.';
     }
     if (msg.contains('VPN')) return msg;
     return 'Something went wrong. Please try again.';

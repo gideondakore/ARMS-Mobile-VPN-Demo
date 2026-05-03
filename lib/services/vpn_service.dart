@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:openvpn_flutter/openvpn_flutter.dart';
@@ -57,15 +59,23 @@ class VpnService extends ChangeNotifier {
     }
 
     try {
+      debugPrint('[VPN] initialize() — creating OpenVPN instance');
       _openVPN = OpenVPN(
         onVpnStatusChanged: _onStatusChanged,
         onVpnStageChanged: _onStageChanged,
       );
 
-      await _openVPN.initialize(localizedDescription: 'ARMS VPN');
+      debugPrint('[VPN] initialize() — calling _openVPN.initialize()');
+      await _openVPN.initialize(
+        groupIdentifier: 'group.com.amalitech.arms_mobile_demo',
+        providerBundleIdentifier: 'com.amalitech.arms_mobile_demo.VPNExtension',
+        localizedDescription: 'ARMS VPN',
+      );
 
       _initialized = true;
-    } catch (e) {
+      debugPrint('[VPN] initialize() — DONE — stage=$_stage');
+    } catch (e, st) {
+      debugPrint('[VPN] initialize() FAILED: $e\n$st');
       _error = 'VPN init failed: $e';
       _message = 'VPN unavailable on this device';
       notifyListeners();
@@ -75,9 +85,27 @@ class VpnService extends ChangeNotifier {
   /// Connects using [configOverride] if provided, otherwise reads the bundled
   /// default config from assets.
   Future<void> connect({String? configOverride}) async {
+    debugPrint(
+      '[VPN] connect() ENTER — kBypassVpn=$kBypassVpn _initialized=$_initialized stage=$_stage isConnected=$isConnected configOverride=${configOverride != null}',
+    );
     if (kBypassVpn) return;
     if (!_initialized) await initialize();
-    if (!_initialized || isConnected || isBusy) return;
+    if (!_initialized) {
+      debugPrint('[VPN] connect() ABORT — not initialized');
+      return;
+    }
+    if (isConnected) {
+      debugPrint('[VPN] connect() ABORT — already connected');
+      return;
+    }
+    // Only block if a connection/disconnection is explicitly in progress.
+    // VPNStage.unknown is a stale state the library may report after init
+    // (especially on second launch when permission is already granted) and
+    // must NOT prevent a fresh connect attempt.
+    if (_stage == VPNStage.connecting || _stage == VPNStage.disconnecting) {
+      debugPrint('[VPN] connect() ABORT — busy stage=$_stage');
+      return;
+    }
 
     _error = null;
 
@@ -85,8 +113,27 @@ class VpnService extends ChangeNotifier {
       final config =
           configOverride ??
           await rootBundle.loadString('assets/mobile_client.ovpn');
-      await _openVPN.connect(config, 'ARMS VPN', certIsRequired: true);
-    } catch (e) {
+      debugPrint(
+        '[VPN] connect() — config loaded (${config.length} chars), calling native',
+      );
+      // NOTE: openvpn_flutter 1.3.4's `connect` method-channel handler
+      // never calls result.success(), so awaiting this Future hangs
+      // forever. We don't need the result — the actual connection
+      // progress is reported via the stage EventChannel. Fire and
+      // forget; consumers should listen for VPNStage.connected.
+      unawaited(
+        _openVPN.connect(config, 'ARMS VPN', certIsRequired: true).catchError((
+          Object e,
+          StackTrace st,
+        ) {
+          debugPrint('[VPN] _openVPN.connect FAILED: $e\n$st');
+          _error = e.toString();
+          _message = 'Failed to start VPN';
+          notifyListeners();
+        }),
+      );
+    } catch (e, st) {
+      debugPrint('[VPN] connect() FAILED: $e\n$st');
       _error = e.toString();
       _message = 'Failed to start VPN';
       notifyListeners();
@@ -116,6 +163,7 @@ class VpnService extends ChangeNotifier {
   // ── Private callbacks ─────────────────────────────────────────
 
   void _onStageChanged(VPNStage stage, String message) {
+    debugPrint('[VPN] stage callback — $stage ("$message")');
     _stage = stage;
     _message = _labelFor(stage);
     if (stage == VPNStage.connected) _error = null;
