@@ -1,3 +1,6 @@
+#NOTE
+The /scripts and the server.js is not suppose to be in the file. I just put it there for future reference
+
 # Trying Flutter VPN Demo
 
 ## Overview
