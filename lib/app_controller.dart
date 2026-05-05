@@ -35,11 +35,13 @@ class AppController extends ChangeNotifier {
   String? _fatalError;
   String? _loginError;
   String? _username;
+  bool _isAdmin = false;
 
   AppState get state => _state;
   String? get fatalError => _fatalError;
   String? get loginError => _loginError;
   String? get username => _username;
+  bool get isAdmin => _isAdmin;
 
   // ── Boot sequence ─────────────────────────────────────────────
   //
@@ -66,11 +68,13 @@ class AppController extends ChangeNotifier {
       final token = await storage.getToken();
       final ovpn = await storage.getOvpnConfig();
       final savedUsername = await storage.getUsername();
+      final savedIsAdmin = await storage.getIsAdmin();
 
       final hasSession = token != null && ovpn != null && savedUsername != null;
 
       if (hasSession) {
         _username = savedUsername;
+        _isAdmin = savedIsAdmin;
         ApiClient.setAuthToken(token);
         // Fire and forget — VpnInterceptor will gate API requests.
         unawaited(vpnService.connect(configOverride: ovpn));
@@ -96,6 +100,7 @@ class AppController extends ChangeNotifier {
       //    until the default VPN tunnel is up.
       final result = await auth.login(email, password);
       _username = result.username;
+      _isAdmin = result.isAdmin;
 
       // 2. Fetch the personalized .ovpn (still on the default tunnel).
       _set(AppState.fetchingConfig);
@@ -106,6 +111,7 @@ class AppController extends ChangeNotifier {
         storage.saveToken(result.token),
         storage.saveUsername(result.username),
         storage.saveOvpnConfig(ovpn),
+        storage.saveIsAdmin(result.isAdmin),
       ]);
 
       // 4. Swap to the personalized config and wait for it to come up
@@ -125,6 +131,7 @@ class AppController extends ChangeNotifier {
   Future<void> logout() async {
     _loginError = null;
     _username = null;
+    _isAdmin = false;
 
     await storage.clearAll();
     ApiClient.clearAuthToken();

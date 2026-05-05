@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../main.dart';
 import '../network/api_client.dart';
+import 'admin_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -153,7 +154,23 @@ class _HomeScreenState extends State<HomeScreen> {
     return Row(
       children: [
         _chip('ARMS MOBILE', const Color(0xFF00D4FF)),
+        if (appController.isAdmin) ...[
+          const SizedBox(width: 6),
+          _chip('ADMIN', const Color(0xFF818CF8)),
+        ],
         const Spacer(),
+        if (appController.isAdmin)
+          IconButton(
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const AdminScreen())),
+            icon: const Icon(
+              Icons.admin_panel_settings_rounded,
+              color: Color(0xFF818CF8),
+              size: 22,
+            ),
+            tooltip: 'Admin panel',
+          ),
         IconButton(
           onPressed: () => _confirmLogout(context),
           icon: const Icon(

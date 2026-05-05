@@ -7,8 +7,8 @@ class AuthService {
   String extractUsername(String email) => email.split('@').first;
 
   /// Authenticates against the Microsoft SSO endpoint exposed through the VPN
-  /// server. Returns the JWT and the username derived from the email.
-  Future<({String token, String username})> login(
+  /// server. Returns the JWT, the username, and an isAdmin flag.
+  Future<({String token, String username, bool isAdmin})> login(
     String email,
     String password,
   ) async {
@@ -19,9 +19,10 @@ class AuthService {
 
     final token = response.data['token'] as String;
     final username = extractUsername(email);
+    final isAdmin = response.data['isAdmin'] as bool? ?? false;
 
     ApiClient.setAuthToken(token);
-    return (token: token, username: username);
+    return (token: token, username: username, isAdmin: isAdmin);
   }
 
   /// Requests the personalized .ovpn config from the VPN Config Service.
